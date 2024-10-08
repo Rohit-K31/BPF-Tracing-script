@@ -1,0 +1,103 @@
+BEGIN {
+        printf("Tracing ... Hit Ctrl-C to end.\n");
+}
+
+usdt:/usr/libexec/qemu-kvm:qemu:migration_bitmap_sync_start
+{
+        @start_time[tid]=nsecs;
+        
+        printf("Sync-START,Time:%s,pid:%ld", strftime("%H-%M-%S-%f", nsecs), pid);
+        if (@a[tid]) {
+                printf(",dirty-sync-count:%u,time-elapsed-after-last-sync:%u", @a[tid], @start_time[tid]-@end_time[tid]);
+        }
+        printf("\n");
+        @a[tid]++;
+}
+
+usdt:/usr/libexec/qemu-kvm:qemu:migration_bitmap_sync_end
+{
+        @begin_time[tid]=nsecs;
+        
+        printf("Sync-END,Time:%s,pid:%ld,dirty_pages:%ld,sync-latency:%ld,", strftime("%H-%M-%S-%f", nsecs), pid, arg0-@dirty_page_count[tid],
+        @begin_time[tid]-@start_time[tid]);
+        printf("bitmap-sync-END:%ld", (@begin_time[tid] - @start_time[tid]));
+        if ( arg0 != 0)  {
+                printf(",dirty-rate:%ld", (arg0-@dirty_page_count[tid])*1000*1000*1000/(@begin_time[tid] -  @end_time[tid]));
+        }
+        printf("\n");
+        @dirty_page_count[tid] = arg0;
+        @end_time[tid] = @begin_time[tid];
+}
+
+usdt:/usr/libexec/qemu-kvm:source_return_path_thread_switchover_acked  //
+{
+         printf("probe:%s,PID:%ld,time:%s\n",probe,pid, strftime("%H-%M-%S-%f", nsecs));
+}
+
+usdt:/usr/libexec/qemu-kvm:qemu:ram_save_iterate_big_wait
+{
+        printf("probe:%s,PID:%ld,TID:%ld,pg_counter:%ld,Duration:%ld ms\n", probe, pid, tid, arg1, arg0);
+}
+
+usdt:/usr/libexec/qemu-kvm:qemu:migrate_transferred  // arg mismatch
+{
+        printf("probe:%s,PID:%ld,thr = %ld\n", probe,pid, arg4);
+}
+
+usdt:/usr/libexec/qemu-kvm:qemu:migrate_pending_estimate,   // migrate_pending -- pending_size, s->threshold_size
+usdt:/usr/libexec/qemu-kvm:qemu:migrate_pending_exact      //
+{
+        printf("probe:%s,PID:%ld,pending_size:%ld,must_precopy:%ld,time:%s\n", probe,pid, arg0, arg1, strftime("%H-%M-%S-%f", nsecs));
+}
+
+usdt:/usr/libexec/qemu-kvm:qemu:savevm_section_start
+{
+         @start3[tid] = nsecs;
+}
+usdt:/usr/libexec/qemu-kvm:qemu:savevm_section_end
+{
+        if (@start3[tid])
+        {
+                $delta = nsecs - @start3[tid];
+                printf("probe:%s,PID:%ld,TID:%ld,device:%s,Duration:%ld ns\n", probe, pid, tid, str(arg0), $delta);
+                delete(@start3[tid]);  // Remove the entry after use
+        }
+
+}
+
+
+//u:/usr/libexec/qemu-kvm:qemu_savevm_state_pending_exact
+u:/usr/libexec/qemu-kvm:qemu_savevm_state_prepare,   // ??
+u:/usr/libexec/qemu-kvm:qemu_savevm_state_setup,
+u:/usr/libexec/qemu-kvm:qemu_savevm_state_cleanup,
+u:/usr/libexec/qemu-kvm:qemu_savevm_state_iterate
+//u:/usr/libexec/qemu-kvm:qemu_savevm_state_pending_estimate
+{
+         @start2[tid] = nsecs;
+}
+
+
+//uretprobe:/usr/libexec/qemu-kvm:qemu_savevm_state_pending_exact,
+uretprobe:/usr/libexec/qemu-kvm:qemu_savevm_state_prepare,
+uretprobe:/usr/libexec/qemu-kvm:qemu_savevm_state_setup,
+uretprobe:/usr/libexec/qemu-kvm:qemu_savevm_state_cleanup,
+uretprobe:/usr/libexec/qemu-kvm:qemu_savevm_state_iterate
+//uretprobe:/usr/libexec/qemu-kvm:qemu_savevm_state_pending_estimate
+{
+    if (@start2[tid])
+    {
+        $delta = nsecs - @start2[tid];
+        printf("probe:%s,PID:%ld,TID:%ld,Duration:%ld ns\n", probe, pid, tid, $delta);
+        delete(@start2[tid]);  // Remove the entry after use
+    }
+}
+
+END {
+        clear(@end_time);
+        clear(@begin_time);
+        clear(@start_time);
+        clear(@start2);
+        clear(@a);
+        clear(@dirty_page_count);
+}
+
