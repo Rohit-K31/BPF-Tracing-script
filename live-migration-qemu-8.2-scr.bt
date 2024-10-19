@@ -126,7 +126,6 @@ END {
         clear(@begin_time);
         clear(@start2);
         clear(@a);
-        clear(@start_save);
         clear(@dirty_page_count);
         clear(@migration_start);
 }
